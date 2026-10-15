@@ -18,6 +18,7 @@ VPS_RPORT=22223
 
 DB_PIDF="$DATA/dropbear.pid"
 TN_PIDF="$DATA/tunnel.pid"
+SUP_PIDF="$DATA/supervisor.pid"
 KP_PIDF="$DATA/keeper.pid"
 KEYF="$DATA/dropbear_host_key"
 TKEY="$DATA/tunnel_key"
@@ -136,28 +137,10 @@ ensure_tunnelkey() {
   [ -s "$TKEYDB" ]
 }
 
-tunnel_on() {
-  if alive "$TN_PIDF" >/dev/null; then log "tunnel đã chạy"; return 0; fi
-  if ! ensure_tunnelkey; then
-    log "thiếu data/tunnel_key — bỏ qua tunnel VPS (vẫn SSH được trong LAN)"
-    return 0
-  fi
-  # Vòng retry nền: tự nối lại khi mất mạng. Cổng VPS_RPORT có thể bị phiên
-  # cũ giữ ~3 phút (ClientAliveInterval) — vòng này sẽ vào được khi cổng trống.
-  if command -v setsid >/dev/null 2>&1; then
-    setsid nohup sh -c "while true; do '$BIN/dbclient' -p $VPS_PORT -R $VPS_RPORT:localhost:$PORT -N -T -y -K 120 -i '$TKEYDB' $VPS_USER@$VPS_HOST >>'$LOG' 2>&1; sleep 15; done" >/dev/null 2>&1 &
-  else
-    nohup sh -c "while true; do '$BIN/dbclient' -p $VPS_PORT -R $VPS_RPORT:localhost:$PORT -N -T -y -K 120 -i '$TKEYDB' $VPS_USER@$VPS_HOST >>'$LOG' 2>&1; sleep 15; done" >/dev/null 2>&1 &
-  fi
-  echo $! > "$TN_PIDF" 2>/dev/null
-  log "tunnel VPS đang nối (port $VPS_RPORT)"
-}
-
-do_on() {
-  if p="$(alive "$DB_PIDF")"; then log "SSH đã bật sẵn (pid $p)"; echo "SSH đã bật"; return 0; fi
-  ensure_hostkey
-  install_authkeys
-  keeper_on
+dropbear_on() {
+  # Start dropbear một lần (vòng supervisor sẽ dựng lại khi nó chết,
+  # vd sau khi máy suspend/resume).
+  if p="$(alive "$DB_PIDF")"; then log "dropbear đã chạy (pid $p)"; return 0; fi
   rm -f "$DB_PIDF"
   if [ -s "$KEYF" ]; then
     set -- "$BIN/dropbear" -p "$PORT" -r "$KEYF" -P "$DB_PIDF"
@@ -171,19 +154,61 @@ do_on() {
   fi
   sleep 1
   if p="$(alive "$DB_PIDF")"; then
+    log "dropbear chạy: pid=$p port=$PORT"
+    return 0
+  fi
+  log "LỖI: dropbear không chạy được (port $PORT bận? xem $LOG)"
+  return 1
+}
+
+tunnel_once() {
+  # Start 1 dbclient (supervisor gọi lại khi nó chết). Không dùng setsid ở
+  # đây để $! chắc chắn là pid của dbclient (setsid có thể fork làm pidfile sai).
+  [ -s "$TKEYDB" ] || return 0
+  nohup "$BIN/dbclient" -p "$VPS_PORT" -R "$VPS_RPORT:localhost:$PORT" \
+    -N -T -y -K 120 -i "$TKEYDB" "$VPS_USER@$VPS_HOST" >>"$LOG" 2>&1 &
+  _tp=$!
+  echo "$_tp" > "$TN_PIDF" 2>/dev/null
+  log "tunnel: dbclient pid=$_tp (VPS port $VPS_RPORT)"
+}
+
+supervisor_on() {
+  # Vòng giám sát nền (15s/vòng): đảm bảo cả dropbear lẫn tunnel luôn sống.
+  # Sống sót qua suspend/resume — đây là chỗ dựng lại dropbear khi máy ngủ dậy
+  # (bản cũ chỉ trông tunnel nên dropbear chết là SSH mất hẳn).
+  if alive "$SUP_PIDF" >/dev/null; then log "supervisor đã chạy"; return 0; fi
+  ensure_tunnelkey || log "thiếu data/tunnel_key — supervisor chỉ giữ dropbear (vẫn SSH được trong LAN)"
+  ( trap '' HUP 2>/dev/null
+    while :; do
+      alive "$DB_PIDF" >/dev/null || dropbear_on
+      if [ -s "$TKEYDB" ]; then
+        alive "$TN_PIDF" >/dev/null || tunnel_once
+      fi
+      sleep 15
+    done ) &
+  echo $! > "$SUP_PIDF" 2>/dev/null
+  log "supervisor đã chạy (15s/vòng: dropbear + tunnel)"
+}
+
+do_on() {
+  if p="$(alive "$DB_PIDF")"; then log "SSH đã bật sẵn (pid $p)"; echo "SSH đã bật"; return 0; fi
+  ensure_hostkey
+  install_authkeys
+  keeper_on
+  if dropbear_on; then
     ip="$(ip -4 addr show 2>/dev/null | awk '/inet / && $2 !~ /^127\./ {sub(/\/.*/, "", $2); print $2; exit}')"
-    log "SSH ĐÃ BẬT: pid=$p port=$PORT ip=${ip:-?}"
+    log "SSH ĐÃ BẬT: port=$PORT ip=${ip:-?}"
     echo "SSH đã bật"
     ( led_blink green 3 ) &
   else
-    log "LỖI: dropbear không chạy được (port $PORT bận? xem $LOG)"
     echo "LỖI: không bật được SSH"
     return 1
   fi
-  tunnel_on
+  supervisor_on
 }
 
 do_off() {
+  killpid "$SUP_PIDF"
   killpid "$TN_PIDF"
   killpat "SSHToggle/bin/dbclient"
   killpid "$KP_PIDF"
@@ -198,7 +223,8 @@ do_off() {
 do_status() {
   if p="$(alive "$DB_PIDF")"; then
     echo "SSH: BẬT (dropbear pid=$p port=$PORT)"
-    if p="$(alive "$TN_PIDF")"; then echo "tunnel VPS: vòng retry đang chạy (port $VPS_RPORT)"; fi
+    if alive "$SUP_PIDF" >/dev/null; then echo "supervisor: đang chạy (giữ dropbear + tunnel)"; fi
+    if p="$(alive "$TN_PIDF")"; then echo "tunnel VPS: dbclient pid=$p (port $VPS_RPORT)"; fi
   else
     echo "SSH: TẮT"
   fi

@@ -1,5 +1,14 @@
 # Changelog — Trimui-SSHToggle
 
+## v0.1.2
+- Supervisor giám sát cả dropbear lẫn tunnel (15s/vòng): fix SSH mất hẳn sau khi
+  máy suspend/resume (bản cũ chỉ trông tunnel nên dropbear chết là mất SSH).
+
+## v0.1.1
+- Nháy vòng LED 2 cần joystick (sunxi_led10..22) thay cho LED trước máy.
+- Fix quirk phần cứng Brick Pro: kênh r/g sysfs bị đảo so với màu thật.
+
+
 ## v0.1.0
 
 - Initial release: one-tap background SSH toggle (no UI).
