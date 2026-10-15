@@ -56,12 +56,24 @@ killpid() { # killpid <pidfile>
   rm -f "$1"
 }
 
-led_blink() { # led_blink <r|g|b> <so lan> — phản hồi trực quan khi toggle
-  c="$1"; n="${2:-2}"; led="/sys/class/leds/sunxi_led0$c/brightness"
-  [ -w "$led" ] || return 0
+# LED joystick trên Brick Pro: sunxi_led10 + sunxi_led11 (RGB).
+# QUIRK phần cứng (user verify 2026-10-15): tên kênh r/g trong sysfs bị đảo
+# so với màu đèn thật (ghi "g" thì đèn ĐỎ sáng). Map ở đây để chỗ gọi dùng
+# đúng ý nghĩa: green = bật, red = tắt.
+led_color() { # led_color <green|red|blue> -> tên kênh sysfs
+  case "$1" in green) echo r;; red) echo g;; *) echo "$1";; esac
+}
+led_blink() { # led_blink <green|red|blue> <số lần> — phản hồi trực quan khi toggle
+  c="$(led_color "$1")"; n="${2:-2}"
   i=0; while [ "$i" -lt "$n" ]; do
-    echo 255 > "$led" 2>/dev/null; sleep 0.3
-    echo 0 > "$led" 2>/dev/null; sleep 0.3
+    for b in sunxi_led10 sunxi_led11; do
+      echo 255 > "/sys/class/leds/$b$c/brightness" 2>/dev/null
+    done
+    sleep 0.3
+    for b in sunxi_led10 sunxi_led11; do
+      echo 0 > "/sys/class/leds/$b$c/brightness" 2>/dev/null
+    done
+    sleep 0.3
     i=$((i + 1))
   done
 }
@@ -160,7 +172,7 @@ do_on() {
     ip="$(ip -4 addr show 2>/dev/null | awk '/inet / && $2 !~ /^127\./ {sub(/\/.*/, "", $2); print $2; exit}')"
     log "SSH ĐÃ BẬT: pid=$p port=$PORT ip=${ip:-?}"
     echo "SSH đã bật"
-    ( led_blink g 3 ) &
+    ( led_blink green 3 ) &
   else
     log "LỖI: dropbear không chạy được (port $PORT bận? xem $LOG)"
     echo "LỖI: không bật được SSH"
@@ -178,7 +190,7 @@ do_off() {
   killpat "SSHToggle/bin/dropbear"
   log "SSH ĐÃ TẮT"
   echo "SSH đã tắt"
-  ( led_blink r 2 ) &
+  ( led_blink red 2 ) &
 }
 
 do_status() {
