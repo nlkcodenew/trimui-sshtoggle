@@ -56,7 +56,7 @@ killpid() { # killpid <pidfile>
   rm -f "$1"
 }
 
-# LED joystick trên Brick Pro: sunxi_led10 + sunxi_led11 (RGB).
+# Vòng LED 2 cần joystick trên Brick Pro: sunxi_led10..sunxi_led22.
 # QUIRK phần cứng (user verify 2026-10-15): tên kênh r/g trong sysfs bị đảo
 # so với màu đèn thật (ghi "g" thì đèn ĐỎ sáng). Map ở đây để chỗ gọi dùng
 # đúng ý nghĩa: green = bật, red = tắt.
@@ -66,12 +66,14 @@ led_color() { # led_color <green|red|blue> -> tên kênh sysfs
 led_blink() { # led_blink <green|red|blue> <số lần> — phản hồi trực quan khi toggle
   c="$(led_color "$1")"; n="${2:-2}"
   i=0; while [ "$i" -lt "$n" ]; do
-    for b in sunxi_led10 sunxi_led11; do
-      echo 255 > "/sys/class/leds/$b$c/brightness" 2>/dev/null
+    j=10; while [ "$j" -le 22 ]; do
+      echo 255 > "/sys/class/leds/sunxi_led${j}${c}/brightness" 2>/dev/null
+      j=$((j + 1))
     done
     sleep 0.3
-    for b in sunxi_led10 sunxi_led11; do
-      echo 0 > "/sys/class/leds/$b$c/brightness" 2>/dev/null
+    j=10; while [ "$j" -le 22 ]; do
+      echo 0 > "/sys/class/leds/sunxi_led${j}${c}/brightness" 2>/dev/null
+      j=$((j + 1))
     done
     sleep 0.3
     i=$((i + 1))
