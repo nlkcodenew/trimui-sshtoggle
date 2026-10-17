@@ -82,6 +82,7 @@ SSHToggle/
 ├── launch.sh        # launcher cho menu TrimUI
 ├── sshtoggle.sh     # toggle|on|off|status
 ├── config.json      # label + icon cho menu
+├── background.png   # nền menu khi focus icon (launcher đọc key "background")
 ├── icon.png
 ├── VERSION
 ├── DOCS.md          # tài liệu này

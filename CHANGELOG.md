@@ -1,5 +1,10 @@
 # Changelog — Trimui-SSHToggle
 
+## v0.1.3
+- Launcher background: thêm `background.png` (gradient đỏ → xanh lá theo tông
+  icon) + key `"background"` trong `config.json` — menu TrimUI đổi nền khi
+  focus vào icon app.
+
 ## v0.1.2
 - Supervisor giám sát cả dropbear lẫn tunnel (15s/vòng): fix SSH mất hẳn sau khi
   máy suspend/resume (bản cũ chỉ trông tunnel nên dropbear chết là mất SSH).
